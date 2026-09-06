@@ -164,14 +164,14 @@ class TradingEnv(gym.Env):
         super().reset(seed = seed)
         
         self._step = 0
-        self._position = np.random.choice(self.positions) if self.initial_position == 'random' else self.initial_position
+        self._position = self.np_random.choice(self.positions) if self.initial_position == 'random' else self.initial_position
         self._limit_orders = {}
         
 
         self._idx = 0
         if self.windows is not None: self._idx = self.windows - 1
         if self.max_episode_duration != 'max':
-            self._idx = np.random.randint(
+            self._idx = self.np_random.integers(
                 low = self._idx, 
                 high = len(self.df) - self.max_episode_duration - self._idx
             )
@@ -217,7 +217,7 @@ class TradingEnv(gym.Env):
     def _take_action_order_limit(self):
         if len(self._limit_orders) > 0:
             ticker = self._get_ticker()
-            for position, params in self._limit_orders.items():
+            for position, params in list(self._limit_orders.items()):
                 if position != self._position and params['limit'] <= ticker["high"] and params['limit'] >= ticker["low"]:
                     self._trade(position, price= params['limit'])
                     if not params['persistent']: del self._limit_orders[position]
@@ -372,7 +372,9 @@ class MultiDatasetTradingEnv(TradingEnv):
         self.dataset_dir = dataset_dir
         self.preprocess = preprocess
         self.episodes_between_dataset_switch = episodes_between_dataset_switch
-        self.dataset_pathes = glob.glob(self.dataset_dir)
+        self.dataset_pathes = sorted(glob.glob(self.dataset_dir))
+        if not self.dataset_pathes:
+            raise FileNotFoundError(f"No dataset found with the path: {self.dataset_dir}")
         self.dataset_nb_uses = np.zeros(shape=(len(self.dataset_pathes), ))
         super().__init__(self.next_dataset(), *args, **kwargs)
 
@@ -381,19 +383,21 @@ class MultiDatasetTradingEnv(TradingEnv):
         # Find the indexes of the less explored dataset
         potential_dataset_pathes = np.where(self.dataset_nb_uses == self.dataset_nb_uses.min())[0]
         # Pick one of them
-        random_int = np.random.randint(potential_dataset_pathes.size)
-        dataset_path = self.dataset_pathes[random_int]
-        self.dataset_nb_uses[random_int] += 1 # Update nb use counts
+        dataset_idx = self.np_random.choice(potential_dataset_pathes)
+        dataset_path = self.dataset_pathes[dataset_idx]
+        self.dataset_nb_uses[dataset_idx] += 1 # Update nb use counts
 
         self.name = Path(dataset_path).name
         return self.preprocess(pd.read_pickle(dataset_path))
 
-    def reset(self, seed=None):
+    def reset(self, seed=None, options=None):
+        if seed is not None:
+            self._np_random, _ = gym.utils.seeding.np_random(seed)
         self._episodes_on_this_dataset += 1
         if self._episodes_on_this_dataset % self.episodes_between_dataset_switch == 0:
             self._set_df(
                 self.next_dataset()
             )
         if self.verbose > 1: print(f"Selected dataset {self.name} ...")
-        return super().reset(seed)
+        return super().reset(seed=seed, options=options)
     
